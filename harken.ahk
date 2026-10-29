@@ -2,11 +2,17 @@
 ; Entry point: loads config, initializes modules, registers hotkeys.
 #SingleInstance
 
+; Fast Filter Keys repeat rates can legitimately exceed AutoHotkey's default
+; hotkey limit. Keep a generous guard while avoiding false-positive popups.
+A_HotkeyInterval := 2000
+A_MaxHotkeysPerInterval := 1000
+
 #Include src/lib/JXON.ahk
 #Include src/lib/toml.ahk
 #Include src/lib/config_loader.ahk
 #Include src/lib/state_store.ahk
 #Include src/lib/virtual_desktop.ahk
+#Include src/lib/WinMover.ahk
 #Include src/lib/focus_or_run.ahk
 #Include src/lib/command_toast.ahk
 #Include src/lib/UIA.ahk
@@ -15,7 +21,7 @@
 
 config_dir := GetConfigDir()
 DirCreate(config_dir)
-global config_path := config_dir "\harken.toml"
+global config_path := config_dir "config.toml"
 EnsureConfigExists(config_path, DefaultConfig())
 config_result := LoadConfig(config_path, DefaultConfig())
 global Config := config_result["config"]
@@ -39,13 +45,15 @@ super_keys := Config["super_key"]
 if !(super_keys is Array)
     super_keys := [super_keys]
 
-RegisterSuperKeyHotkey("~", "", (*) => OnSuperKeyDown())
+; Super is a dedicated modifier. Suppress the native LWin/RWin event so
+; holding or releasing it alone cannot open Start/Search.
+RegisterSuperKeyHotkey("", "", (*) => OnSuperKeyDown())
 if HasSuperKey("CapsLock")
     SetCapsLockState "AlwaysOff"
 
 global reload_mode_active := false
 reload_mode_timeout := 20000
-RegisterSuperComboHotkey(";", (*) => ActivateReloadMode(reload_mode_timeout))
+RegisterSuperComboHotkey("sc028", (*) => ActivateReloadMode(reload_mode_timeout))
 HotIf ReloadModeActive
 Hotkey("r", (*) => ExecuteCommand(() => Reload()))
 Hotkey("i", (*) => ExecuteCommand(OpenWindowInspector))
@@ -61,6 +69,9 @@ if Config.Has("config_watch") && Config["config_watch"]["enabled"]
     StartConfigWatcher(config_path, Config["config_watch"]["interval_ms"])
 
 SetWinDelay(-1)
+; WinMover owns the live mouse-drag loop; Harken supplies the configured
+; Super hotkeys and guards around its DynamicMove/DynamicResize methods.
+global WinMoverObj := WinMover()
 
 #Include src/lib/window_manager.ahk
 #Include src/lib/directional_focus.ahk
@@ -79,22 +90,17 @@ DefaultConfig() {
         "config_version", 1,
         "super_key", ["CapsLock"],
         "apps", [
-            Map("id", "files", "hotkey", "e", "win_title", "ahk_exe explorer.exe", "exclude_titles", [], "run", "explorer"),
-            Map("id", "editor", "hotkey", "v", "win_title", "ahk_exe Code.exe", "exclude_titles", [], "run", "code"),
-            Map("id", "terminal", "hotkey", "s", "win_title", "ahk_exe WindowsTerminal.exe", "exclude_titles", [], "run", "wt"),
-            Map("id", "notes", "hotkey", "n", "win_title", "ahk_exe notepad++.exe", "exclude_titles", [], "run", "notepad++")
+            Map("id", "files", "hotkey", "f", "win_title", "ahk_exe explorer.exe", "exclude_titles", [], "run", "explorer.exe", "always_run", false),
+            Map("id", "editor", "hotkey", "v", "win_title", "ahk_exe Code.exe", "exclude_titles", [], "run", "code", "always_run", false),
+            Map("id", "terminal", "hotkey", "s", "win_title", "ahk_exe WindowsTerminal.exe", "exclude_titles", [], "run", "wt", "always_run", false),
+            Map("id", "notes", "hotkey", "n", "win_title", "ahk_exe notepad++.exe", "exclude_titles", [], "run", "notepad++", "always_run", false)
         ],
-        "global_hotkeys", [
-            Map(
-                "enabled", true,
-                "hotkey", "Alt",
-                "target_exes", [],
-                "send_keys", "^{Tab}"
-            )
-        ],
+        "global_hotkeys", [],
         "window", Map(
             "resize_step", 20,
             "move_step", 20,
+            "coarse_resize_step", 75,
+            "coarse_move_step", 75,
             "super_double_tap_ms", 300,
             "move_mode", Map(
                 "enable", true,
@@ -102,12 +108,11 @@ DefaultConfig() {
             ),
             "cycle_app_windows_hotkey", "c",
             "cycle_app_windows_current_hotkey", "+c",
-            "center_width_cycle_hotkey", "Space",
             "minimize_others_hotkey", ""
         ),
         "window_selector", Map(
             "enabled", true,
-            "hotkey", "w",
+            "hotkey", "",
             "max_results", 12,
             "title_preview_len", 60,
             "match_title", true,
@@ -117,7 +122,7 @@ DefaultConfig() {
         ),
         "screen_search", Map(
             "enabled", true,
-            "hotkey", ".",
+            "hotkey", "",
             "hint_chars", "asdfghjklqwertyuiopzxcvbnm",
             "max_results", 200,
             "min_size_px", 12,
@@ -132,18 +137,18 @@ DefaultConfig() {
         "window_manager", Map(
             "grid_size", 3,
             "margins", Map(
-                "top", 6,
-                "left", 4,
-                "right", 4,
-                "bottom", 5
+                "top", 8,
+                "left", 8,
+                "right", 8,
+                "bottom", 8
             ),
-            "gap_px", 0,
-            "exceptions_regex", "(Shell_TrayWnd|Shell_SecondaryTrayWnd|WorkerW|XamlExplorerHostIslandWindow)"
+            "gap_px", 5,
+            "exceptions_regex", "(Shell_TrayWnd|Shell_SecondaryTrayWnd|WorkerW|XamlExplorerHostIslandWindow|Windows[.]UI[.]Core[.]CoreWindow)"
         ),
         "virtual_desktop", Map(
             "enabled", true,
             "switch_on_focus", true,
-            "ensure_count", 0,
+            "ensure_count", 9,
             "cycle_prefer_current", true,
             "scroll_switch", false,
             "switch_curtain", Map(
@@ -155,7 +160,17 @@ DefaultConfig() {
             "next_hotkey", "l",
             "move_prev_hotkey", "h",
             "move_next_hotkey", "l",
-            "desktop_hotkeys", [],
+            "desktop_hotkeys", [
+                Map("desktop", 1, "hotkey", "1"),
+                Map("desktop", 2, "hotkey", "2"),
+                Map("desktop", 3, "hotkey", "3"),
+                Map("desktop", 4, "hotkey", "4"),
+                Map("desktop", 5, "hotkey", "5"),
+                Map("desktop", 6, "hotkey", "6"),
+                Map("desktop", 7, "hotkey", "7"),
+                Map("desktop", 8, "hotkey", "8"),
+                Map("desktop", 9, "hotkey", "9")
+            ],
             "goto_hotkeys", [],
             "move_hotkeys", [],
             "debug_cycle", false,
@@ -179,11 +194,12 @@ DefaultConfig() {
         ),
         "focus_border", Map(
             "enabled", true,
-            "border_color", "#357EC7",
+            "border_color", "#458588",
             "move_mode_color", "#2ECC71",
+            "geometry_mode_color", "#D79921",
             "command_mode_color", "#FFD400",
-            "border_thickness", 4,
-            "corner_radius", 16,
+            "border_thickness", 3,
+            "corner_radius", 0,
             "update_interval_ms", 20
         ),
         "helper", Map(
@@ -280,10 +296,10 @@ EnsureConfigExists(config_path, default_config) {
 }
 
 GetConfigDir() {
-    user_profile := EnvGet("USERPROFILE")
+    user_profile := EnvGet("APPDATA")
     if !user_profile
         user_profile := A_ScriptDir
-    return user_profile "\.config\harken"
+    return user_profile "\harken\"
 }
 
 GetAppDataDir() {
@@ -431,6 +447,11 @@ ExecuteCommand(callback) {
 }
 
 OnSuperKeyDown() {
+    ; If Alt was pressed first, its down event has already reached the app.
+    ; Mark it now so its release is masked as part of the Super chord.
+    if GetKeyState("LAlt", "P") || GetKeyState("RAlt", "P")
+        MarkSuperAltChordUsed()
+
     if ScreenSearch.IsActive() {
         ScreenSearch.Hide()
         return

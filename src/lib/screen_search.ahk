@@ -31,7 +31,7 @@ class ScreenSearch
         global Config
         if !Config.Has("screen_search") || !Config["screen_search"]["enabled"]
             return
-        if ReloadModeActive() || Window.IsMoveMode()
+        if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode()
             return
         hwnd := 0
         try hwnd := WinGetID("A")

@@ -34,7 +34,7 @@ UpdateCommandToastVisibility() {
         return
     }
 
-    if ReloadModeActive() || Window.IsMoveMode() || command_toast_temp_visible {
+    if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode() || command_toast_temp_visible {
         ShowCommandToast(command_toast_temp_visible)
         StartCommandToastVisibilityTimer()
     } else {
@@ -227,7 +227,7 @@ ShowCommandToastTemporary() {
 
 StartCommandToastInputHook() {
     global command_toast_input_timer
-    if ReloadModeActive() || Window.IsMoveMode()
+    if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode()
         return
     StopCommandToastInputHook()
     command_toast_input_timer := CommandToastStartInputHook
@@ -236,7 +236,7 @@ StartCommandToastInputHook() {
 
 CommandToastStartInputHook(*) {
     global command_toast_input_hook
-    if ReloadModeActive() || Window.IsMoveMode()
+    if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode()
         return
     command_toast_input_hook := InputHook("V")
     command_toast_input_hook.KeyOpt("{All}", "E")
@@ -278,13 +278,13 @@ UnregisterCommandToastKeydown() {
 }
 
 CommandToastKeydownHandler(*) {
-    if ReloadModeActive() || Window.IsMoveMode()
+    if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode()
         return
     HideCommandToast()
 }
 
 CommandToastOnKeyDown(*) {
-    if ReloadModeActive() || Window.IsMoveMode()
+    if ReloadModeActive() || Window.IsMoveMode() || Window.IsGeometryMode()
         return
     ; Any input dismisses the temporary overlay in normal mode.
     HideCommandToast()
@@ -324,8 +324,33 @@ BuildCommandToastModel() {
     global Config
     is_command_mode := ReloadModeActive()
     is_move_mode := Window.IsMoveMode()
+    is_geometry_mode := Window.IsGeometryMode()
     key_width := 22
     model := Map()
+
+    if is_geometry_mode {
+        lines := []
+        lines.Push(FormatRow("n/e/i/o or arrows", "move left/down/up/right", key_width))
+        lines.Push(FormatRow("shift+n/o or left/right", "shrink/expand right edge", key_width))
+        lines.Push(FormatRow("shift+i/e or up/down", "shrink/expand bottom edge", key_width))
+        lines.Push(FormatRow("ctrl+neio or arrows", "resize around center", key_width))
+        lines.Push(FormatRow(", / .", "move window among monitors", key_width))
+        lines.Push(FormatRow("; / :", "firmware monitor aliases", key_width))
+        lines.Push(FormatRow("c", "toggle centered position", key_width))
+        lines.Push(FormatRow("m", "toggle monocle", key_width))
+        lines.Push(FormatRow("v / h", "toggle vertical / horizontal max", key_width))
+        lines.Push(FormatRow("f", "toggle native fullscreen", key_width))
+        lines.Push(FormatRow("1/3/7/9", "cycle 1/2, 1/3, 2/3 corners", key_width))
+        lines.Push(FormatRow("2/4/6/8", "cycle 1/2, 1/3, 2/3 edges", key_width))
+        lines.Push(FormatRow("5", "fill detected middle gap", key_width))
+        lines.Push(FormatRow("Enter", "accept geometry", key_width))
+        lines.Push(FormatRow("Esc", "cancel and restore", key_width))
+        model["mode"] := "geometry"
+        model["title"] := "Geometry Mode"
+        model["body_text"] := StrJoin(lines, "`n")
+        model["key"] := "geometry|" model["body_text"]
+        return model
+    }
 
     if is_move_mode {
         lines := []
@@ -368,10 +393,28 @@ BuildCommandToastRows(key_width := 16) {
     global Config
     rows := []
     rows.Push(Map("key", "Window", "desc", ""))
-    rows.Push(Map("key", "super+arrows", "desc", "resize"))
+    rows.Push(Map("key", "super+neio/arrows", "desc", "focus by direction"))
+    rows.Push(Map("key", "super+, / .", "desc", "focus next/previous monitor"))
+    rows.Push(Map("key", "super+shift+, / .", "desc", "send to next/previous monitor"))
+    rows.Push(Map("key", "super+; / :", "desc", "firmware aliases for shifted , / ."))
+    rows.Push(Map("key", "super+alt+, / .", "desc", "send and follow next/previous monitor"))
+    rows.Push(Map("key", "super+] / [", "desc", "raise/lower within monitor"))
+    rows.Push(Map("key", "super+PgDn", "desc", "minimize window"))
+    rows.Push(Map("key", "super+PgUp", "desc", "undo active window geometry"))
+    rows.Push(Map("key", "super+g", "desc", "enter geometry mode"))
+    rows.Push(Map("key", "super+left/right drag", "desc", "WinMover move/resize"))
+    rows.Push(Map("key", "super+1-9", "desc", "switch virtual desktop"))
+    rows.Push(Map("key", "super+shift+1-9", "desc", "send window to desktop"))
+    rows.Push(Map("key", "super+alt+1-9", "desc", "send window and follow"))
+    rows.Push(Map("key", "super+ctrl+f", "desc", "toggle app fullscreen"))
+    rows.Push(Map("key", "super+alt+neio/arrows", "desc", "move coarse increment"))
+    rows.Push(Map("key", "super+shift+neio/arrows", "desc", "resize coarse increment"))
     rows.Push(Map("key", "super+shift+h/j/k/l", "desc", "resize center"))
     rows.Push(Map("key", "super+ctrl+h/j/k/l", "desc", "move"))
-    rows.Push(Map("key", "super+m", "desc", "maximize"))
+    rows.Push(Map("key", "super+m", "desc", "toggle monocle"))
+    rows.Push(Map("key", "super+shift+s", "desc", "rectangular screenshot"))
+    rows.Push(Map("key", "super+space", "desc", "compact Start search"))
+    rows.Push(Map("key", "super+w", "desc", "close"))
     rows.Push(Map("key", "double-super", "desc", "native overview"))
     rows.Push(Map("key", "overview h/j/k/l", "desc", "navigate"))
     rows.Push(Map("key", "alt+-", "desc", "minimize"))
@@ -380,15 +423,22 @@ BuildCommandToastRows(key_width := 16) {
     if (Config["window"]["cycle_app_windows_current_hotkey"] != "")
         rows.Push(Map("key", "super+" Config["window"]["cycle_app_windows_current_hotkey"], "desc", "cycle app windows (current desktop)"))
     if Config.Has("window_selector") && Config["window_selector"]["enabled"] {
-        rows.Push(Map("key", "super+" Config["window_selector"]["hotkey"], "desc", "window selector"))
+        selector_hotkey := Config["window_selector"]["hotkey"]
+        if (selector_hotkey != "" && StrLower(selector_hotkey) != "w")
+            rows.Push(Map("key", "super+" selector_hotkey, "desc", "window selector"))
     }
     if Config.Has("screen_search") && Config["screen_search"]["enabled"] {
-        rows.Push(Map("key", "super+" Config["screen_search"]["hotkey"], "desc", "screen search"))
+        screen_search_hotkey := Config["screen_search"]["hotkey"]
+        if (
+            screen_search_hotkey != ""
+            && screen_search_hotkey != ","
+            && screen_search_hotkey != "."
+        )
+            rows.Push(Map("key", "super+" screen_search_hotkey, "desc", "screen search"))
     }
     if Config.Has("directional_focus") && Config["directional_focus"]["enabled"] {
-        rows.Push(Map("key", "alt+h/l", "desc", "focus left/right"))
-        rows.Push(Map("key", "alt+j/k", "desc", "focus down/up"))
-        rows.Push(Map("key", "alt+[ / ]", "desc", "cycle stacked"))
+        rows.Push(Map("key", "super+n/o", "desc", "focus left/right"))
+        rows.Push(Map("key", "super+e/i", "desc", "focus down/up"))
     }
     rows.Push(Map("key", "", "desc", ""))
     rows.Push(Map("key", "Global Hotkeys", "desc", ""))
@@ -398,7 +448,7 @@ BuildCommandToastRows(key_width := 16) {
     }
     rows.Push(Map("key", "", "desc", ""))
     rows.Push(Map("key", "Command Mode", "desc", ""))
-    rows.Push(Map("key", ";", "desc", "enter command mode"))
+    rows.Push(Map("key", "'", "desc", "enter command mode"))
     return rows
 }
 

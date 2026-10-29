@@ -60,6 +60,7 @@ ConfigSchema() {
             "run", OptionalSpec("string"),
             "run_start_in", OptionalSpec("string"),
             "run_paths", OptionalSpec(["string"]),
+            "always_run", OptionalSpec("bool"),
             "desktop", OptionalSpec("number"),
             "follow_on_spawn", OptionalSpec("bool"),
             "ignore_classes", OptionalSpec(["string"]),
@@ -67,6 +68,7 @@ ConfigSchema() {
             "focus_border", OptionalSpec(Map(
                 "border_color", OptionalSpec("string"),
                 "move_mode_color", OptionalSpec("string"),
+                "geometry_mode_color", OptionalSpec("string"),
                 "command_mode_color", OptionalSpec("string"),
                 "border_thickness", OptionalSpec("number"),
                 "corner_radius", OptionalSpec("number"),
@@ -82,6 +84,8 @@ ConfigSchema() {
         "window", Map(
             "resize_step", "number",
             "move_step", "number",
+            "coarse_resize_step", OptionalSpec("number"),
+            "coarse_move_step", OptionalSpec("number"),
             "super_double_tap_ms", "number",
             "move_mode", Map(
                 "enable", "bool",
@@ -89,7 +93,8 @@ ConfigSchema() {
             ),
             "cycle_app_windows_hotkey", "string",
             "cycle_app_windows_current_hotkey", "string",
-            "center_width_cycle_hotkey", "string",
+            ; Accepted for compatibility; Super+Space is reserved for compact Start search.
+            "center_width_cycle_hotkey", OptionalSpec("string"),
             "minimize_others_hotkey", OptionalSpec("string")
         ),
         "window_selector", Map(
@@ -178,6 +183,7 @@ ConfigSchema() {
             "enabled", "bool",
             "border_color", "string",
             "move_mode_color", "string",
+            "geometry_mode_color", OptionalSpec("string"),
             "command_mode_color", "string",
             "border_thickness", "number",
             "corner_radius", "number",

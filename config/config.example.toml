@@ -32,18 +32,19 @@ super_key = ["F24", "CapsLock"]
 [apps]
 
 [apps.browser]
-hotkey = "f"
-win_title = "ahk_exe floorp.exe"
-run = "floorp"
+hotkey = "b"
+win_title = "ahk_exe firefox.exe"
+run = "firefox.exe"
 run_paths = []
+always_run = true
 # desktop = 2
 # follow_on_spawn = true
 # exclude_titles = [".*SilverBullet.*", ".*ChatGPT.*"]
 
 [apps.files]
-hotkey = "e"
+hotkey = "f"
 win_title = "ahk_exe explorer.exe"
-run = "explorer"
+run = "explorer.exe"
 run_paths = []
 
 [apps.editor]
@@ -55,10 +56,11 @@ run_paths = []
 # desktop = 2
 
 [apps.terminal]
-hotkey = "s"
-win_title = "ahk_exe WindowsTerminal.exe"
-run = "wt"
+hotkey = "Return"
+win_title = "ahk_exe pwsh.exe"
+run = "pwsh.exe -NoLogo"
 run_paths = []
+always_run = true
 
 [apps.notepad]
 hotkey = "n"
@@ -84,7 +86,7 @@ run_paths = []
 # Match-only override (no hotkey): tweak focus border by title.
 [apps.vscode-border]
 match = { exe = "Code.exe", title = " - Visual Studio Code$", title_regex = true }
-focus_border = { border_color = "#4D96FF", border_thickness = 7, corner_radius = 12 }
+focus_border = { border_color = "#458588", border_thickness = 3, corner_radius = 0 }
 
 # Process tree matching (example): split a terminal app and its child tool.
 #
@@ -110,13 +112,8 @@ focus_border = { border_color = "#4D96FF", border_thickness = 7, corner_radius =
 # Global hotkeys (optional)
 # -------------------------------------------------------------
 
-[[global_hotkeys]]
-enabled = true
-hotkey = "Alt"
-target_exes = []
-# Send Ctrl+Tab when holding super+alt.
-# Will require virtual desktop hotkeys to be used without pressing super first in the combo.
-send_keys = "^{Tab}"
+# Standalone super+alt is reserved and intentionally does nothing. Plain Alt
+# remains native, while super+alt can still modify Harken window actions.
 
 # -------------------------------------------------------------
 # Window management
@@ -125,13 +122,14 @@ send_keys = "^{Tab}"
 [window]
 resize_step = 20
 move_step = 20
+coarse_resize_step = 75
+coarse_move_step = 75
 super_double_tap_ms = 300
 
 # Cycle app windows across all desktops.
 cycle_app_windows_hotkey = "+c"
 # Cycle app windows on the current desktop only.
 cycle_app_windows_current_hotkey = "c"
-center_width_cycle_hotkey = "Space"
 # minimize_others_hotkey = "-"
 
 [window.move_mode]
@@ -144,7 +142,8 @@ cancel_key = "Esc"
 
 [window_selector]
 enabled = true
-hotkey = "w"
+# Super+w is reserved for closing the active window.
+hotkey = ""
 max_results = 30
 title_preview_len = 60
 match_title = true
@@ -158,7 +157,8 @@ close_on_focus_loss = true
 
 [screen_search]
 enabled = true
-hotkey = "."
+# Super+, and Super+. are reserved for monitor focus.
+hotkey = ""
 hint_chars = "asdfghjklqwertyuiopzxcvbnm"
 max_results = 200
 min_size_px = 12
@@ -172,14 +172,14 @@ debug_log = false
 
 [window_manager]
 grid_size = 3
-gap_px = 0
-exceptions_regex = "(Shell_TrayWnd|Shell_SecondaryTrayWnd|WorkerW|XamlExplorerHostIslandWindow)"
+gap_px = 5
+exceptions_regex = "(Shell_TrayWnd|Shell_SecondaryTrayWnd|WorkerW|XamlExplorerHostIslandWindow|Windows[.]UI[.]Core[.]CoreWindow)"
 
 [window_manager.margins]
-top = 6
-left = 4
-right = 4
-bottom = 5
+top = 8
+left = 8
+right = 8
+bottom = 8
 
 # -------------------------------------------------------------
 # Virtual desktops
@@ -188,12 +188,12 @@ bottom = 5
 [virtual_desktop]
 enabled = true
 switch_on_focus = true
-ensure_count = 0
+ensure_count = 9
 cycle_prefer_current = true
 
-# Optional mouse wheel switching (super+wheel).
-# Keep disabled if you use super+wheel for resize elsewhere.
-scroll_switch = true
+# Retained for compatibility with older configs; wheel desktop switching is
+# no longer registered by Harken.
+scroll_switch = false
 
 [virtual_desktop.switch_curtain]
 enabled = true
@@ -201,8 +201,7 @@ enabled = true
 opacity = 204
 color = "#202020"
 
-# Hotkey fields here use AHK syntax without super (super is implied).
-# Modifiers are applied by Harken (alt or alt+shift) for desktop actions.
+# Relative hotkey fields use AHK syntax without super (super is implied).
 prev_hotkey = "h"
 next_hotkey = "l"
 move_prev_hotkey = "h"
@@ -226,6 +225,27 @@ hotkey = "1"
 [[virtual_desktop.2]]
 hotkey = "2"
 
+[[virtual_desktop.3]]
+hotkey = "3"
+
+[[virtual_desktop.4]]
+hotkey = "4"
+
+[[virtual_desktop.5]]
+hotkey = "5"
+
+[[virtual_desktop.6]]
+hotkey = "6"
+
+[[virtual_desktop.7]]
+hotkey = "7"
+
+[[virtual_desktop.8]]
+hotkey = "8"
+
+[[virtual_desktop.9]]
+hotkey = "9"
+
 # -------------------------------------------------------------
 # Directional focus
 # -------------------------------------------------------------
@@ -248,11 +268,12 @@ debug_enabled = false
 
 [focus_border]
 enabled = true
-border_color = "#222feb"
+border_color = "#458588"
 move_mode_color = "#2ECC71"
+geometry_mode_color = "#D79921"
 command_mode_color = "#FFD400"
-border_thickness = 7
-corner_radius = 16
+border_thickness = 3
+corner_radius = 0
 update_interval_ms = 20
 
 # -------------------------------------------------------------

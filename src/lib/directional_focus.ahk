@@ -1,4 +1,4 @@
-; Directional focus calculations and stacked cycling.
+; Directional focus calculations.
 global Config
 global directional_focus_history := Map()
 global directional_focus_debug_enabled := false
@@ -27,7 +27,7 @@ DirectionalFocus(direction) {
     if !Config.Has("directional_focus") || !Config["directional_focus"]["enabled"]
         return
 
-    active_hwnd := WinExist("A")
+    active_hwnd := NormalizeDirectionalWindow(WinExist("A"))
     if !active_hwnd || Window.IsException("ahk_id " active_hwnd)
         return
 
@@ -112,80 +112,6 @@ DirectionalFocus(direction) {
     } else {
         UpdateDirectionalFocusDebug("direction", direction, active, candidates, [], 0, z_map)
     }
-}
-
-DirectionalFocusStacked(direction) {
-    if !Config.Has("directional_focus") || !Config["directional_focus"]["enabled"]
-        return
-
-    active_hwnd := WinExist("A")
-    if !active_hwnd || Window.IsException("ahk_id " active_hwnd)
-        return
-
-    WinGetPosEx(&ax, &ay, &aw, &ah, "ahk_id " active_hwnd)
-    if (aw <= 0 || ah <= 0)
-        return
-
-    active := Map(
-        "hwnd", active_hwnd,
-        "x", ax,
-        "y", ay,
-        "w", aw,
-        "h", ah,
-        "cx", ax + aw / 2,
-        "cy", ay + ah / 2,
-        "area", aw * ah,
-        "monitor", Screen.FromWindow("ahk_id " active_hwnd)
-    )
-
-    threshold := Config["directional_focus"]["stacked_overlap_threshold"]
-    stack_tolerance := Config["directional_focus"]["stack_tolerance_px"]
-    cross_monitor := Config["directional_focus"]["cross_monitor"]
-    z_map := BuildZOrderMap()
-    stacked := GetStackedWindows(active, threshold, stack_tolerance, cross_monitor, z_map)
-    if (stacked.Length < 2)
-    {
-        ResetDirectionalDebugTracking()
-        directional_focus_last_reason := "stacked_none"
-        UpdateDirectionalFocusDebug("stacked", direction, active, [], stacked, 0, z_map)
-        return
-    }
-
-    ordered := OrderByStableStack(stacked)
-    if (ordered.Length < 2)
-    {
-        ResetDirectionalDebugTracking()
-        directional_focus_last_reason := "stacked_none"
-        UpdateDirectionalFocusDebug("stacked", direction, active, [], ordered, 0, z_map)
-        return
-    }
-
-    current_index := 0
-    for i, win in ordered {
-        if (win["hwnd"] = active_hwnd) {
-            current_index := i
-            break
-        }
-    }
-    if (current_index = 0)
-    {
-        ResetDirectionalDebugTracking()
-        directional_focus_last_reason := "stacked_none"
-        UpdateDirectionalFocusDebug("stacked", direction, active, [], ordered, 0, z_map)
-        return
-    }
-
-    if (direction = "prev")
-        next_index := (current_index <= 1) ? ordered.Length : current_index - 1
-    else
-        next_index := (current_index >= ordered.Length) ? 1 : current_index + 1
-
-    ResetDirectionalDebugTracking()
-    directional_focus_last_reason := "stacked_cycle"
-    directional_focus_last_activated_hwnd := ActivateWindow(ordered[next_index]["hwnd"])
-    directional_focus_last_activation_match := (directional_focus_last_activated_hwnd = ordered[next_index]["hwnd"])
-    UpdateDirectionalFocusDebug("stacked", direction, active, [], ordered, ordered[next_index]["hwnd"], z_map)
-    directional_focus_last_stacked_hwnd := ordered[next_index]["hwnd"]
 }
 
 ToggleDirectionalFocusDebug() {
@@ -411,20 +337,106 @@ GetStackedWindows(active, threshold, stack_tolerance, cross_monitor, z_map := ""
     return list
 }
 
-IsDirectionalCandidate(hwnd, active, cross_monitor) {
+/*IsDirectionalCandidate(hwnd, active, cross_monitor) {
+ *    if !hwnd
+ *        return false
+ *    if Window.IsException("ahk_id " hwnd)
+ *        return false
+ *    if (WinGetMinMax("ahk_id " hwnd) = -1)
+ *        return false
+ *    if !IsWindowVisible(hwnd)
+ *        return false
+ *    if !cross_monitor {
+ *        if (Screen.FromWindow("ahk_id " hwnd) != active["monitor"])
+ *            return false
+ *    }
+ *    return true
+ *}
+ */
+
+IsDirectionalCandidate(hwnd, active, cross_monitor)
+{
+    try {
+        if !hwnd || !WinExist("ahk_id " hwnd)
+            return false
+
+        if Window.IsException("ahk_id " hwnd)
+            return false
+
+        if (WinGetMinMax("ahk_id " hwnd) = -1)
+            return false
+
+        if !IsWindowVisible(hwnd)
+            return false
+
+        if IsOwnedDirectionalAuxiliaryWindow(hwnd)
+            return false
+
+        if !cross_monitor
+            && (Screen.FromWindow("ahk_id " hwnd) != active["monitor"])
+            return false
+
+        return true
+    }
+    catch {
+        ; Windows can close while WinGetList() is being processed.
+        return false
+    }
+}
+
+NormalizeDirectionalWindow(hwnd) {
+    if !hwnd
+        return 0
+    if !IsOwnedDirectionalAuxiliaryWindow(hwnd)
+        return hwnd
+
+    root_owner := DllCall(
+        "GetAncestor",
+        "Ptr", hwnd,
+        "UInt", 3,
+        "Ptr"
+    )
+    return root_owner ? root_owner : hwnd
+}
+
+IsOwnedDirectionalAuxiliaryWindow(hwnd) {
     if !hwnd
         return false
-    if Window.IsException("ahk_id " hwnd)
+
+    owner := DllCall("GetWindow", "Ptr", hwnd, "UInt", 4, "Ptr")
+    if !owner
         return false
-    if (WinGetMinMax("ahk_id " hwnd) = -1)
+
+    root_owner := DllCall(
+        "GetAncestor",
+        "Ptr", hwnd,
+        "UInt", 3,
+        "Ptr"
+    )
+    if !root_owner || root_owner = hwnd
         return false
-    if !IsWindowVisible(hwnd)
+
+    ; Modeless palettes and quick-action bars should focus their owning app
+    ; frame. Keep modal dialogs eligible: Windows disables their root owner
+    ; until the dialog is dismissed.
+    if !DllCall("IsWindowVisible", "Ptr", root_owner, "Int")
         return false
-    if !cross_monitor {
-        if (Screen.FromWindow("ahk_id " hwnd) != active["monitor"])
-            return false
-    }
-    return true
+    if !DllCall("IsWindowEnabled", "Ptr", root_owner, "Int")
+        return false
+
+    child_pid := 0
+    owner_pid := 0
+    DllCall(
+        "GetWindowThreadProcessId",
+        "Ptr", hwnd,
+        "UInt*", &child_pid
+    )
+    DllCall(
+        "GetWindowThreadProcessId",
+        "Ptr", root_owner,
+        "UInt*", &owner_pid
+    )
+    return child_pid && child_pid = owner_pid
 }
 
 IsWindowVisible(hwnd) {
@@ -436,10 +448,42 @@ IsWindowVisible(hwnd) {
     return true
 }
 
-BuildWindowInfo(hwnd, z_map := "") {
-    WinGetPosEx(&x, &y, &w, &h, "ahk_id " hwnd)
+/*BuildWindowInfo(hwnd, z_map := "") {
+ *    WinGetPosEx(&x, &y, &w, &h, "ahk_id " hwnd)
+ *    if (w <= 0 || h <= 0)
+ *        return ""
+ *    info := Map(
+ *        "hwnd", hwnd,
+ *        "x", x,
+ *        "y", y,
+ *        "w", w,
+ *        "h", h,
+ *        "cx", x + w / 2,
+ *        "cy", y + h / 2,
+ *        "area", w * h,
+ *        "z", 999999
+ *    )
+ *    if (z_map is Map && z_map.Has(hwnd))
+ *        info["z"] := z_map[hwnd]
+ *    return info
+ *}
+ */
+
+BuildWindowInfo(hwnd, z_map := "")
+{
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return ""
+
+    try {
+        WinGetPosEx(&x, &y, &w, &h, "ahk_id " hwnd)
+    }
+    catch {
+        return ""
+    }
+
     if (w <= 0 || h <= 0)
         return ""
+
     info := Map(
         "hwnd", hwnd,
         "x", x,
@@ -451,10 +495,13 @@ BuildWindowInfo(hwnd, z_map := "") {
         "area", w * h,
         "z", 999999
     )
+
     if (z_map is Map && z_map.Has(hwnd))
         info["z"] := z_map[hwnd]
+
     return info
 }
+
 
 FindDirectionalBest(active, candidates, direction, prefer_topmost := false, frontmost_guard := 0, overlap_min := 0, z_map := "") {
     global directional_focus_last_reason, directional_focus_last_guard_max, directional_focus_last_min_primary
@@ -762,29 +809,6 @@ OrderByZMap(z_map, windows) {
         loop count - i {
             j := A_Index
             if (ordered[j]["z"] > ordered[j + 1]["z"]) {
-                temp := ordered[j]
-                ordered[j] := ordered[j + 1]
-                ordered[j + 1] := temp
-            }
-        }
-    }
-    return ordered
-}
-
-OrderByStableStack(windows) {
-    ordered := []
-    for _, win in windows
-        ordered.Push(win)
-
-    count := ordered.Length
-    if (count < 2)
-        return ordered
-
-    loop count - 1 {
-        i := A_Index
-        loop count - i {
-            j := A_Index
-            if (ordered[j]["hwnd"] > ordered[j + 1]["hwnd"]) {
                 temp := ordered[j]
                 ordered[j] := ordered[j + 1]
                 ordered[j + 1] := temp

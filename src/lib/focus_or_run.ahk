@@ -4,6 +4,23 @@
 ; recorded for this hotkey.
 FocusOrRun(winTitle, exePath, hotkey_id, app_config := "", *) {
     static last_window := Map()
+
+    if (app_config is Map && app_config.Has("always_run") && app_config["always_run"]) {
+        ; Some bindings are launchers rather than focus toggles. Snapshot the
+        ; existing windows so a delegated launch (notably Firefox) can focus
+        ; the new window instead of whichever instance was already present.
+        existing_windows := BuildAppWindowHandleSet(winTitle, app_config)
+        if RunResolved(exePath, app_config) {
+            ScheduleFocusSpawnedAppWindow(
+                winTitle,
+                app_config,
+                existing_windows
+            )
+            ScheduleMoveAppWindowToDesktop(winTitle, app_config)
+        }
+        return
+    }
+
     target_hwnd := 0
     BeginMatchRun()
     hwnds := GetAppWindowList(winTitle, app_config)
@@ -37,8 +54,8 @@ FocusOrRun(winTitle, exePath, hotkey_id, app_config := "", *) {
     } else {
         if VirtualDesktopFocusDebugEnabled()
             LogFocusOrRunMiss(hotkey_id, app_config)
-        RunResolved(exePath, app_config)
-        ScheduleMoveAppWindowToDesktop(winTitle, app_config)
+        if RunResolved(exePath, app_config)
+            ScheduleMoveAppWindowToDesktop(winTitle, app_config)
     }
 }
 
@@ -549,6 +566,66 @@ PickDesktopAssignedWindow(hwnds) {
     return 0
 }
 
+BuildAppWindowHandleSet(win_title, app_config := "") {
+    handles := Map()
+    for _, hwnd in GetAppWindowList(win_title, app_config)
+        handles[hwnd] := true
+    return handles
+}
+
+ScheduleFocusSpawnedAppWindow(
+    win_title,
+    app_config,
+    existing_windows
+) {
+    if (win_title = "")
+        return
+
+    attempts := 0
+    callback := 0
+    callback := () => TryFocusSpawnedAppWindow(
+        win_title,
+        app_config,
+        existing_windows,
+        &attempts,
+        callback
+    )
+    SetTimer(callback, 100)
+}
+
+TryFocusSpawnedAppWindow(
+    win_title,
+    app_config,
+    existing_windows,
+    &attempts,
+    callback
+) {
+    attempts += 1
+    hwnds := GetAppWindowList(win_title, app_config)
+    for _, hwnd in hwnds {
+        if existing_windows.Has(hwnd)
+            continue
+        candidate := PickFocusableAppWindow([hwnd], win_title)
+        if !candidate
+            continue
+        ActivateWindowAcrossDesktops(candidate)
+        if WinActive("ahk_id " candidate) {
+            SetTimer(callback, 0)
+            return
+        }
+    }
+
+    if (attempts < 30)
+        return
+
+    ; Some single-instance applications reuse an existing HWND. After three
+    ; seconds, focus the best matching window rather than leaving focus behind.
+    fallback := PickFocusableAppWindow(hwnds, win_title)
+    if fallback
+        ActivateWindowAcrossDesktops(fallback)
+    SetTimer(callback, 0)
+}
+
 ScheduleMoveAppWindowToDesktop(win_title, app_config := "") {
     if !VirtualDesktopEnabled()
         return
@@ -629,6 +706,7 @@ RunResolved(command, app_config := "") {
             Run resolved, run_start_in
         else
             Run resolved
+        return true
     } catch as err {
         MsgBox(
             "Failed to launch: " command "`n" err.Message "`n`n" .
@@ -636,6 +714,7 @@ RunResolved(command, app_config := "") {
             "harken",
             "Iconx"
         )
+        return false
     }
 }
 
@@ -668,13 +747,20 @@ ResolveRunPath(command, app_config := "") {
         }
     }
 
-    shortcut_target := FindStartMenuShortcut(command)
-    if shortcut_target
-        return shortcut_target
-
     exe_name := command
     if !InStr(StrLower(exe_name), ".exe")
         exe_name := exe_name ".exe"
+
+    ; Prefer an exact Windows-system executable before fuzzy Start Menu
+    ; matching. Otherwise "explorer.exe" can resolve to Internet Explorer.lnk,
+    ; whose environment-based working directory is invalid until expanded.
+    windows_target := A_WinDir "\\" exe_name
+    if FileExist(windows_target)
+        return windows_target
+
+    shortcut_target := FindStartMenuShortcut(command)
+    if shortcut_target
+        return shortcut_target
 
     extra_paths := []
     if (app_config is Map && app_config.Has("run_paths") && app_config["run_paths"] is Array) {
@@ -812,7 +898,7 @@ ResolveShortcutStartIn(link_path) {
         shortcut := shell.CreateShortcut(link_path)
         return Map(
             "target", Trim(shortcut.TargetPath " " shortcut.Arguments),
-            "start_in", shortcut.WorkingDirectory
+            "start_in", ExpandEnvVars(shortcut.WorkingDirectory)
         )
     } catch {
         return ""

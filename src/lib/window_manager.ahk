@@ -31,6 +31,7 @@ class Window
      */
     static grid_size := Config["window_manager"]["grid_size"]
     static move_mode := false
+    static geometry_mode := false
     static side_cycle_index := Map()
 
 
@@ -46,20 +47,27 @@ class Window
 
     static __New()
     {
-        HotIf (*) => IsSuperKeyPressed()
-            && !GetKeyState('Shift', 'P')
-            && !GetKeyState('Ctrl', 'P')
-            && !GetKeyState('LAlt', 'P')
-            && !GetKeyState('RAlt', 'P')
+        ; Super+arrows are directional-focus aliases; grid snapping no longer
+        ; owns them. Super+m is registered with the other explicit Super
+        ; combinations so it cannot race this class's monitor hotkeys.
+        HotIf (*) => !GetKeyState('Ctrl', 'P')
             && !this.IsMoveMode()
-        Hotkey('*k', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveUp')))
-        Hotkey('*h', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveLeft')))
-        Hotkey('*j', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveDown')))
-        Hotkey('*l', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveRight')))
-        Hotkey('*u', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveToPreviousMonitor')))
-        Hotkey('*o', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveToNextMonitor')))
-        Hotkey('*n', ObjBindMethod(this, 'HotkeyCallback', ObjBindMethod(this, 'MoveToNearestPosition')))
-        Hotkey('*m', ObjBindMethod(this, 'Maximize'))
+        ; The configured-Super combination is authoritative. A separate
+        ; physical-Super query can fail under foreground keyboard handlers and
+        ; leak Alt+comma/period to applications such as Emacs Xref.
+        RegisterSuperComboHotkey(
+            ',',
+            ObjBindMethod(this, 'HandleMonitorHotkey', 1)
+        )
+        RegisterSuperComboHotkey(
+            '.',
+            ObjBindMethod(this, 'HandleMonitorHotkey', -1)
+        )
+        ; The keyboard firmware emits semicolon/colon for shifted comma/period.
+        RegisterSuperComboHotkey(
+            'sc027',
+            ObjBindMethod(this, 'HandleHardwareShiftedMonitorHotkey')
+        )
         HotIf
 
         ; releasing modifier key destroys gui guides
@@ -68,6 +76,8 @@ class Window
 
     static SetMoveMode(state) => Window.move_mode := state
     static IsMoveMode(*) => Window.move_mode
+    static SetGeometryMode(state) => Window.geometry_mode := state
+    static IsGeometryMode(*) => Window.geometry_mode
 
 
 
@@ -186,8 +196,32 @@ class Window
 
 
 
-    static IsException(id := 'A') => InStr(Window.exceptions, WinGetClass(id))
+    /*static IsException(id := 'A') => InStr(Window.exceptions, WinGetClass(id))*/
 
+    static IsException(id := "A")
+    {
+        try {
+            hwnd := WinExist(id)
+
+            ; A vanished window should simply be ignored as a candidate.
+            if !hwnd
+                return true
+
+            class_name := WinGetClass("ahk_id " hwnd)
+
+            if (class_name = "")
+                return true
+
+            if (Window.exceptions = "")
+                return false
+
+            return RegExMatch(class_name, Window.exceptions) != 0
+        }
+        catch {
+            ; The window may disappear between WinExist() and WinGetClass().
+            return true
+        }
+    }
 
 
     /**
@@ -396,16 +430,150 @@ class Window
 
 
 
-    static MoveToPreviousMonitor(coords) {
-        Send('#+{Left}')                                                ; move window to the previous monitor
-        Window.UpdatePosition(coords)                                   ; update window position and adjust gui guides
+    static HandleMonitorHotkey(direction, *) {
+        shift_pressed := GetKeyState('Shift', 'P')
+        alt_pressed := GetKeyState('LAlt', 'P') || GetKeyState('RAlt', 'P')
+
+        ; Super+Alt+Shift is intentionally left unbound.
+        if shift_pressed && alt_pressed
+            return
+
+        if shift_pressed {
+            this.SendActiveWindowToAdjacentMonitor(direction, false)
+            return
+        }
+
+        if alt_pressed {
+            MarkSuperAltChordUsed()
+            this.SendActiveWindowToAdjacentMonitor(direction, true)
+            return
+        }
+
+        this.FocusAdjacentMonitor(direction)
     }
 
 
 
-    static MoveToNextMonitor(coords) {
-        Send('#+{Right}')                                               ; move window to the next monitor
-        Window.UpdatePosition(coords)                                   ; update window position and adjust gui guides
+    static HandleHardwareShiftedMonitorHotkey(*) {
+        ; Semicolon is the firmware's shifted comma (next); colon is its
+        ; shifted period (previous). Both variants leave focus on the source.
+        direction := GetKeyState('Shift', 'P') ? -1 : 1
+        this.SendActiveWindowToAdjacentMonitor(direction, false)
+    }
+
+
+
+    static FocusAdjacentMonitor(direction) {
+        active_hwnd := WinExist('A')
+        if !active_hwnd
+            return
+
+        current_monitor := Screen.FromWindow('ahk_id ' active_hwnd)
+        target_monitor := this.GetAdjacentMonitor(current_monitor, direction)
+        if (target_monitor = current_monitor)
+            return
+
+        this.ActivateMostRecentWindowOnMonitor(target_monitor)
+    }
+
+
+
+    static SendActiveWindowToAdjacentMonitor(direction, follow_window) {
+        hwnd := WinExist('A')
+        if !hwnd || this.IsException('ahk_id ' hwnd)
+            return
+
+        source_monitor := Screen.FromWindow('ahk_id ' hwnd)
+        target_monitor := this.GetAdjacentMonitor(source_monitor, direction)
+        if (target_monitor = source_monitor)
+            return
+
+        RememberWindowGeometry('ahk_id ' hwnd)
+        min_max := WinGetMinMax('ahk_id ' hwnd)
+        if (min_max = -1)
+            return
+
+        if (min_max = 1)
+            WinRestore('ahk_id ' hwnd)
+
+        WinGetPosEx(&x, &y, &width, &height, 'ahk_id ' hwnd)
+        MonitorGetWorkArea(source_monitor, &source_left, &source_top, &source_right, &source_bottom)
+        MonitorGetWorkArea(target_monitor, &target_left, &target_top, &target_right, &target_bottom)
+
+        source_width := source_right - source_left
+        source_height := source_bottom - source_top
+        target_width := target_right - target_left
+        target_height := target_bottom - target_top
+        if (source_width <= 0 || source_height <= 0 || target_width <= 0 || target_height <= 0)
+            return
+
+        ; Preserve the window's proportional position and size across monitors
+        ; so snapped layouts survive differing resolutions and work areas.
+        target_x := target_left + Round((x - source_left) * target_width / source_width)
+        target_y := target_top + Round((y - source_top) * target_height / source_height)
+        target_window_width := Max(1, Round(width * target_width / source_width))
+        target_window_height := Max(1, Round(height * target_height / source_height))
+        WinMoveEx(
+            target_x,
+            target_y,
+            target_window_width,
+            target_window_height,
+            'ahk_id ' hwnd
+        )
+
+        if (min_max = 1)
+            WinMaximize('ahk_id ' hwnd)
+
+        if follow_window {
+            WinActivate('ahk_id ' hwnd)
+            return
+        }
+
+        this.ActivateMostRecentWindowOnMonitor(source_monitor, hwnd)
+    }
+
+
+
+    static GetAdjacentMonitor(current_monitor, direction) {
+        monitor_count := MonitorGetCount()
+        if (monitor_count <= 1)
+            return current_monitor
+
+        target_monitor := current_monitor + direction
+        if (target_monitor < 1)
+            return monitor_count
+        if (target_monitor > monitor_count)
+            return 1
+        return target_monitor
+    }
+
+
+
+    static ActivateMostRecentWindowOnMonitor(monitor_number, exclude_hwnd := 0) {
+        for _, hwnd in WinGetList() {
+            try {
+                if (hwnd = exclude_hwnd)
+                    continue
+                if this.IsException('ahk_id ' hwnd)
+                    continue
+                if (WinGetMinMax('ahk_id ' hwnd) = -1)
+                    continue
+                if !IsWindowOnCurrentDesktop(hwnd)
+                    continue
+
+                ex_style := WinGetExStyle('ahk_id ' hwnd)
+                if (ex_style & 0x80) || (ex_style & 0x8000000)
+                    continue
+                if !(WinGetStyle('ahk_id ' hwnd) & 0x10000000)
+                    continue
+                if (Screen.FromWindow('ahk_id ' hwnd) != monitor_number)
+                    continue
+
+                WinActivate('ahk_id ' hwnd)
+                return true
+            }
+        }
+        return false
     }
 
 
@@ -422,8 +590,11 @@ class Window
      * Determine where on the screen the window should be
      * and the window's width and height
      */
-    static Move(coords, hwnd := 'A')
+    static Move(coords, hwnd := 'A', remember_geometry := true)
     {
+        if remember_geometry
+            RememberWindowGeometry(hwnd)
+
         width_is_int := IsInteger(coords.width)
         height_is_int := IsInteger(coords.height)
 
@@ -569,7 +740,7 @@ class Gui_Guides
 
         this.gui.Show('NoActivate')                                     ; show gui
         Gui_Guides.list.Set(this.gui, this.gui.Hwnd)                    ; add gui to map
-        Window.Move(guide_coords, this.gui.Hwnd)           ; move gui guide to correct location
+        Window.Move(guide_coords, this.gui.Hwnd, false)    ; guides are not restorable app windows
         this.CornerRadius()                                             ; curve corners of gui
     }
 

@@ -4,7 +4,6 @@ global Config
 RegisterUnboundHotkeys() {
     used_keys := Map()
 
-    AddUsedKey(used_keys, Config["window"]["center_width_cycle_hotkey"])
     AddUsedKey(used_keys, Config["window"]["cycle_app_windows_hotkey"])
     AddUsedKey(used_keys, Config["window"]["cycle_app_windows_current_hotkey"])
     AddUsedKey(used_keys, "m")
@@ -16,6 +15,8 @@ RegisterUnboundHotkeys() {
     AddUsedKey(used_keys, "u")
     AddUsedKey(used_keys, "o")
     AddUsedKey(used_keys, "n")
+    AddUsedKey(used_keys, "w")
+    AddUsedKey(used_keys, "f")
 
     if Config.Has("screen_search") && Config["screen_search"]["enabled"]
         AddUsedKey(used_keys, Config["screen_search"]["hotkey"])
