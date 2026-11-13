@@ -1,6 +1,8 @@
 # Harken
 A window manager written in AutoHotkey v2.
 
+> This project is a personal fork of Harken, originally developed by Grant Kilber. It includes modifications and is distributed under the MIT License. See the LICENSE file for details.
+
 Harken allows a keyboard-centered workflow on Windows: a single super modifier, mnemonic app keys, and fast window actions. Alt+Tab and Win+Tab still work, but you will hardly use them.
 
 ## Contents
